@@ -33,7 +33,7 @@ int main()
     localAddress.sin_family = AF_INET;
     localAddress.sin_port = htons(SERVER_PORT);
 
-    int ret = inet_pton(AF_INET, &SERVER_ADDR, localAddress.sin_addr.s_addr);
+    int ret = inet_pton(AF_INET, SERVER_ADDR, &localAddress.sin_addr.s_addr);
     if (ret == -1)
     {
         perror("inet_pton error");
@@ -85,6 +85,7 @@ int main()
         printf("请选择你需要的功能：\n");
         scanf("%d", &choice);
         /* 清空输入缓冲区 */
+        write(socketfd, &choice, sizeof(choice));
         while ((c = getchar()) != EOF && c != '\n');
 
         switch (choice)
