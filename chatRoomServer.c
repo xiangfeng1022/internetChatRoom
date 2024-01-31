@@ -9,9 +9,11 @@
 #include "balanceBinarySearchTree.h"
 #include <strings.h>
 #include <sqlite3.h>
+#include <string.h>
 
 #define SERVER_PORT     8080
 #define LISTEN_MAX      128
+#define BUFFER_SIZE 300
 
 #define MIN_THREADS     10
 #define MAX_THREADS     20
@@ -19,6 +21,9 @@
 
 #define DEFAULT_LOGIN_NAME  20
 #define DEFAULT_LOGIN_PAWD  16
+
+/* 创建数据库句柄 */
+sqlite3 * chatRoomDB = NULL;
 
 enum CLIENT_CHOICE
 {
@@ -49,7 +54,16 @@ pthread_mutex_t g_mutex;
 /* AVL比较器：以登录名做比较 */
 int compareFunc(void * val1, void * val2)
 {
-
+    char *buf1 = (char *)val1;
+    char *buf2 = (char *)val2;
+    if(strlen(buf1) != strlen(buf2))
+    {
+        return -1;
+    }
+    else
+    {
+        return strncmp(buf1, buf2, strlen(buf1));
+    }
 }
 
 /* AVL打印器 */
@@ -57,6 +71,9 @@ int printfFunc(void * val)
 {
 
 }
+
+/* 聊天内容插入数据库函数 */
+static void databaseInsert(sqlite3 *db, char *filename, char *username, char *word);
 
 void * chatHander(void * arg)
 {
@@ -78,6 +95,7 @@ void * chatHander(void * arg)
     char loginPawd[DEFAULT_LOGIN_PAWD];
     bzero(loginPawd, sizeof(loginPawd));
 
+    int flag = 0;
     /* 程序运行 */
     while (1)
     {
@@ -89,21 +107,105 @@ void * chatHander(void * arg)
             close(acceptfd);
             pthread_exit(NULL);
         }
+        /* 当前客户端聊天文件名 */
+        char clientHostBuffer[BUFFER_SIZE];
+        bzero(clientHostBuffer, sizeof(clientHostBuffer));
+        /* 对方客户端聊天文件名 */
+        char clientGuestBuffer[BUFFER_SIZE];
+        bzero(clientGuestBuffer, sizeof(clientGuestBuffer));
+        /* 客户端用户名聊天文件名 */
+        char clientUsernameBuffer[BUFFER_SIZE];
+        bzero(clientUsernameBuffer, sizeof(clientUsernameBuffer));
+
         switch (choice)
         {
-        /* 注册功能 */
+        /* 登录功能 */
         case LOG_IN:
             /* code */
 
+            /* 测试功能用例 */
+            #if 1
+            int choose = 0;
+            printf("选择账户：\n");
+            scanf("%d", &choose);
+            if(choose == 1)
+            {
+                balanceBinarySearchTreeInsert(onlineList, "aa");
+                strncat(clientHostBuffer, "aa", strlen("aa") + 1);
+                strncpy(clientUsernameBuffer, "aa", strlen("aa") + 1);
+            }
+            else if(choose == 2)
+            {
+                balanceBinarySearchTreeInsert(onlineList, "bb");
+                strncat(clientHostBuffer, "bb", strlen("bb") + 1);
+                strncpy(clientUsernameBuffer, "bb", strlen("bb") + 1);
+            }
+            #endif
+            
+            flag = 1;
             break;
         
-        /* 登录功能 */
+        /* 注册功能 */
         case REGISTER:
             /* code */
-
+            
             break;
 
         default:
+            break;
+        }
+
+        /* 接收缓冲区 */
+        char recvBuffer[BUFFER_SIZE];
+        bzero(recvBuffer, sizeof(recvBuffer));
+        
+        while(flag)
+        {
+            sqlite3 *chat1db = NULL;
+            sqlite3 *chat2db = NULL;
+            int readBytes = read(acceptfd, recvBuffer, sizeof(recvBuffer) - 1);
+            int ret = 0;
+            if(balanceBinarySearchTreeIsContainAppointVal(onlineList, &recvBuffer))
+            {
+                write(acceptfd, "对方在线", strlen("对方在线"));
+                /* 存储当前客户端聊天记录文件名 */
+                strncat(clientHostBuffer, "->", strlen("->") + 1);
+                strncat(clientHostBuffer, recvBuffer, sizeof(recvBuffer));
+                strncat(clientHostBuffer, ".db", strlen(".db") + 1);
+                /* 存储对方客户端聊天记录文件名 */
+                strncat(clientGuestBuffer, recvBuffer, sizeof(recvBuffer));
+                strncat(clientGuestBuffer, "->", strlen("->") + 1);
+                strncat(clientGuestBuffer, clientUsernameBuffer, sizeof(clientUsernameBuffer));
+                strncat(clientGuestBuffer, ".db", strlen(".db") + 1);
+            }
+            else if(!balanceBinarySearchTreeIsContainAppointVal(onlineList, &recvBuffer))
+            {
+                write(acceptfd, "对方不在线", strlen("对方不在线"));
+                break;
+            }
+            while(1)
+            {
+                /* 从客户端读取输入的文字 */
+                readBytes = read(acceptfd, recvBuffer, sizeof(recvBuffer) - 1);
+                if(readBytes < 0)
+                {
+                    perror("read error");
+                    break;
+                }
+                else if(readBytes == 0)
+                {
+                    printf("客户端下线\n");
+                    break;
+                }
+                else if(readBytes > 1)
+                {
+                    databaseInsert(chat1db, clientHostBuffer, clientUsernameBuffer, recvBuffer);
+                    databaseInsert(chat2db, clientGuestBuffer, clientUsernameBuffer, recvBuffer);
+                }
+            }
+            /* 关闭数据库链接 */
+            sqlite3_close(chat1db);
+            sqlite3_close(chat2db);
             break;
         }
 
@@ -235,7 +337,9 @@ int main()
         chat.communicateFd = acceptfd;
 
         /* 向线程池中插入线程执行函数 */
-        taskQueueInsert(&pool, chatHander, (void *)&chat);
+        pthread_t tid;
+        pthread_create(&tid, NULL, chatHander, (void *)&chat);
+        // taskQueueInsert(&pool, chatHander, (void *)&chat);
     }
 
     /* 销毁资源 */
@@ -248,4 +352,69 @@ int main()
     threadPoolDestroy(&pool);
 
     return 0;
+}
+
+/* 聊天内容插入数据库函数 */
+static void databaseInsert(sqlite3 *db, char *filename, char *username, char *word)
+{
+    const char *sql = NULL;
+    /* 打开当前客户端的聊天记录存储数据库 */
+    
+    /* 打开数据库：如果数据库不存在，那么就创建 */
+    int ret = sqlite3_open(filename, &db);
+    if(ret != SQLITE_OK)
+    {
+        perror("sqlite open error");
+        exit(-1);
+    }
+    /* 预编译的SQL语句对象 */
+    sqlite3_stmt *stmt;
+    sql = "insert into chat values (?, ?)";
+    
+    /* 准备SQL语句 */
+    ret = sqlite3_prepare_v2(db, sql, -1, &stmt, NULL);
+    if (ret != SQLITE_OK) 
+    {
+        printf("sqlite3_prepare_v2 error\n");
+        sqlite3_finalize(stmt);
+        sqlite3_close(db);
+        exit(-1);
+    }
+
+    /* 绑定文本参数 */
+    /* 用户名 */
+    ret = sqlite3_bind_text(stmt, 1, username, -1, SQLITE_STATIC);
+    if (ret != SQLITE_OK) 
+    {
+        printf("sqlite3_bind_text error\n");
+        sqlite3_finalize(stmt);
+        sqlite3_close(db);
+        exit(-1);
+    }
+    /* 输入内容 */
+    ret = sqlite3_bind_text(stmt, 2, word, -1, SQLITE_STATIC);
+    if (ret != SQLITE_OK) 
+    {
+        printf("sqlite3_bind_text error\n");
+        sqlite3_finalize(stmt);
+        sqlite3_close(db);
+        exit(-1);
+    }
+
+    /* 执行SQL语句 */
+    ret = sqlite3_step(stmt);
+    if (ret != SQLITE_DONE) 
+    {
+        printf("sqlite3_step error\n");
+        sqlite3_finalize(stmt);
+        sqlite3_close(db);
+        exit(-1);
+    }
+    else 
+    {
+        printf("success\n");
+    }
+
+    /* 清理资源 */
+    sqlite3_finalize(stmt);
 }
