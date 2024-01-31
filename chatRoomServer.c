@@ -21,6 +21,7 @@
 
 #define DEFAULT_LOGIN_NAME  20
 #define DEFAULT_LOGIN_PAWD  16
+#define BUFFER_SQL          100
 
 /* 创建数据库句柄 */
 sqlite3 * chatRoomDB = NULL;
@@ -73,7 +74,10 @@ int printfFunc(void * val)
 }
 
 /* 聊天内容插入数据库函数 */
-static void databaseInsert(sqlite3 *db, char *filename, char *username, char *word);
+static void databaseChatContentInsert(sqlite3 *db, char *filename, char *username, char *word);
+
+/* 注册信息插入数据库函数 */
+static void databaseRegesiterContentInsert(sqlite3 *db, char *id, char *password);
 
 void * chatHander(void * arg)
 {
@@ -95,6 +99,8 @@ void * chatHander(void * arg)
     char loginPawd[DEFAULT_LOGIN_PAWD];
     bzero(loginPawd, sizeof(loginPawd));
 
+
+
     int flag = 0;
     /* 程序运行 */
     while (1)
@@ -113,7 +119,7 @@ void * chatHander(void * arg)
         /* 对方客户端聊天文件名 */
         char clientGuestBuffer[BUFFER_SIZE];
         bzero(clientGuestBuffer, sizeof(clientGuestBuffer));
-        /* 客户端用户名聊天文件名 */
+        /* 客户端用户名 */
         char clientUsernameBuffer[BUFFER_SIZE];
         bzero(clientUsernameBuffer, sizeof(clientUsernameBuffer));
 
@@ -147,8 +153,56 @@ void * chatHander(void * arg)
         
         /* 注册功能 */
         case REGISTER:
-            /* code */
+            // 读取用户输入的登录名和密码
+            ssize_t readBytes = read(acceptfd, loginName, sizeof(loginName));
+            if (readBytes < 0)
+            {
+                perror("read error");
+                close(acceptfd);
+                exit(-1);
+            }
+            readBytes = read(acceptfd, loginPawd, sizeof(loginPawd));
+            if (readBytes < 0)
+            {
+                perror("read error");
+                close(acceptfd);
+                exit(-1);
+            }
+
+            // 加锁以保证在线列表的互斥访问
+            pthread_mutex_lock(&g_mutex);
             
+            /* 打开数据库 */
+            sqlite3 * chatRoomDB;
+            int ret = sqlite3_open("chatRoom.db", &chatRoomDB);
+            if(ret != SQLITE_OK)
+            {
+                perror("sqlite open error");
+                exit(-1);
+            }
+
+            // 检查用户是否已经存在
+            char * ermsg = NULL;
+            char sql[BUFFER_SQL];
+            memset(sql, 0, sizeof(sql));
+            sprintf(sql, "select * from user WHERE id='%s' and password='%s'", loginName, loginPawd);
+            ret = sqlite3_exec(chatRoomDB, sql, NULL ,NULL, &ermsg);
+            if(ret == SQLITE_OK)
+            {
+                // 用户已存在
+                write(acceptfd, "REGISTER_FAIL", sizeof("REGISTER_FAIL"));
+            }
+            else
+            {
+                // 将新用户添加到数据库
+                databaseRegesiterContentInsert(chatRoomDB, loginName, loginPawd);
+
+                // 注册成功
+                write(acceptfd, "REGISTER_SUCCESS", sizeof("REGISTER_SUCCESS"));
+            }
+
+            // 解锁
+            pthread_mutex_unlock(&g_mutex);
             break;
 
         default:
@@ -199,8 +253,8 @@ void * chatHander(void * arg)
                 }
                 else if(readBytes > 1)
                 {
-                    databaseInsert(chat1db, clientHostBuffer, clientUsernameBuffer, recvBuffer);
-                    databaseInsert(chat2db, clientGuestBuffer, clientUsernameBuffer, recvBuffer);
+                    databaseChatContentInsert(chat1db, clientHostBuffer, clientUsernameBuffer, recvBuffer);
+                    databaseChatContentInsert(chat2db, clientGuestBuffer, clientUsernameBuffer, recvBuffer);
                 }
             }
             /* 关闭数据库链接 */
@@ -355,10 +409,9 @@ int main()
 }
 
 /* 聊天内容插入数据库函数 */
-static void databaseInsert(sqlite3 *db, char *filename, char *username, char *word)
+static void databaseChatContentInsert(sqlite3 *db, char *filename, char *username, char *word)
 {
     const char *sql = NULL;
-    /* 打开当前客户端的聊天记录存储数据库 */
     
     /* 打开数据库：如果数据库不存在，那么就创建 */
     int ret = sqlite3_open(filename, &db);
@@ -393,6 +446,63 @@ static void databaseInsert(sqlite3 *db, char *filename, char *username, char *wo
     }
     /* 输入内容 */
     ret = sqlite3_bind_text(stmt, 2, word, -1, SQLITE_STATIC);
+    if (ret != SQLITE_OK) 
+    {
+        printf("sqlite3_bind_text error\n");
+        sqlite3_finalize(stmt);
+        sqlite3_close(db);
+        exit(-1);
+    }
+
+    /* 执行SQL语句 */
+    ret = sqlite3_step(stmt);
+    if (ret != SQLITE_DONE) 
+    {
+        printf("sqlite3_step error\n");
+        sqlite3_finalize(stmt);
+        sqlite3_close(db);
+        exit(-1);
+    }
+    else 
+    {
+        printf("success\n");
+    }
+
+    /* 清理资源 */
+    sqlite3_finalize(stmt);
+}
+
+/* 注册信息插入数据库函数 */
+static void databaseRegesiterContentInsert(sqlite3 *db, char *id, char *password)
+{
+    const char *sql = NULL;
+    
+    /* 预编译的SQL语句对象 */
+    sqlite3_stmt *stmt;
+    sql = "insert into user values (?, ?)";
+    
+    /* 准备SQL语句 */
+    int ret = sqlite3_prepare_v2(db, sql, -1, &stmt, NULL);
+    if (ret != SQLITE_OK) 
+    {
+        printf("sqlite3_prepare_v2 error\n");
+        sqlite3_finalize(stmt);
+        sqlite3_close(db);
+        exit(-1);
+    }
+
+    /* 绑定文本参数 */
+    /* 用户名 */
+    ret = sqlite3_bind_text(stmt, 1, id, -1, SQLITE_STATIC);
+    if (ret != SQLITE_OK) 
+    {
+        printf("sqlite3_bind_text error\n");
+        sqlite3_finalize(stmt);
+        sqlite3_close(db);
+        exit(-1);
+    }
+    /* 输入内容 */
+    ret = sqlite3_bind_text(stmt, 2, password, -1, SQLITE_STATIC);
     if (ret != SQLITE_OK) 
     {
         printf("sqlite3_bind_text error\n");
