@@ -10,9 +10,11 @@
 #include <strings.h>
 
 #define SERVER_PORT 8080
-#define SERVER_ADDR "172.30.149.120"
+#define SERVER_ADDR "172.27.201.95"
 #define BUFFER_SIZE 300
 
+#define DEFAULT_LOGIN_NAME  20
+#define DEFAULT_LOGIN_PAWD  16
 enum CLIENT_CHOICE
 {
     LOG_IN = 1,
@@ -90,10 +92,46 @@ int main()
 
         switch (choice)
         {
-
         /* 登录 */
         case LOG_IN:
-            /* code */
+            char username[DEFAULT_LOGIN_NAME];
+            char password[DEFAULT_LOGIN_PAWD];
+            char recvResult[BUFFER_SIZE];
+
+            printf("请输入用户名：");
+            scanf("%s", username);
+
+            printf("请输入密码：");
+            scanf("%s", password);
+
+            /* 发送用户名和密码给服务器 */
+            ssize_t ret = write(socketfd, username, sizeof(username));
+            if (ret < 0)
+            {
+                perror("write error");
+                close(socketfd);
+                exit(-1);
+            }
+        
+            ret = write(socketfd, password, sizeof(password));
+            if (ret < 0)
+            {
+                perror("write error");
+                close(socketfd);
+                exit(-1);
+            }
+
+            ret = read(socketfd, recvResult, sizeof(recvResult));
+            if (ret < 0)
+            {
+                perror("write error");
+                close(socketfd);
+                exit(-1);
+            }
+
+            printf("Login Result: %s\n", recvResult);
+            close(socketfd);
+
             break;
         
         /* 注册 */
