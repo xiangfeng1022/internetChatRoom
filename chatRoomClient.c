@@ -22,6 +22,53 @@ enum CLIENT_CHOICE
     PRIVATE_CHAT,
 };
 
+/* 注册 */
+void registerUser(int socketfd)
+{
+    char username[100];
+    char password[100];
+
+    printf("请输入用户名：");
+    scanf("%s", username);
+    printf("请输入密码：");
+    scanf("%s", password);
+
+    /* 发送注册信息给服务器 */
+    int ret = write(socketfd, username, sizeof(username));
+    if (ret < 0)
+    {
+        perror("write error");
+        close(socketfd);
+        exit(-1);
+    }
+    ret = write(socketfd, password, sizeof(password));
+    if (ret < 0)
+    {
+        perror("write error");
+        close(socketfd);
+        exit(-1);
+    }
+
+    /* 接收服务器的响应 */
+    char response[300];
+    read(socketfd, response, sizeof(response) - 1);
+    response[strlen(response)] = '\0';
+
+    /* 解析服务器的响应并进行处理 */
+    if (strcmp(response, "REGISTER_SUCCESS") == 0)
+    {
+        printf("注册成功！\n");
+    }
+    else if (strcmp(response, "REGISTER_FAIL") == 0)
+    {
+        printf("注册失败，请重试。\n");
+    }
+    else
+    {
+        printf("未知错误。\n");
+    }
+}
+
 int main()
 {
     int socketfd = socket(AF_INET, SOCK_STREAM, 0);
@@ -104,6 +151,7 @@ int main()
         /* 注册 */
         case REGISTER:
             /* code */
+            registerUser(socketfd);
             break;
 
         default:
