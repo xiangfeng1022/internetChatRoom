@@ -1,33 +1,28 @@
-TARFET=server
-TARGET=client
-OBJ=balanceBinarySearchTree.o doubleLinkList.o doubleLinkListQueue.o threadPool.o chatRoomServer.o
-OBJECT=balanceBinarySearchTree.o doubleLinkList.o doubleLinkListQueue.o threadPool.o chatRoomClient.o
+TARGET1=server
+TARGET2=client
+OBJ1=chatRoomServer.o
+OBJ2=chatRoomClient.o
 
-$(TARFET):$(OBJ)
-	gcc $^ -o $@ -lsqlite3
+LDFALGS=-L./src_so -L./src_so1
+LIBS=-lSoAVLTree -lSoThreadPool
 
-$(TARGET):$(OBJECT)
-	gcc $^ -o $@ -lsqlite3
+SO_DIR=./src_so 
 
-balanceBinarySearchTree.o:balanceBinarySearchTree.c
-	gcc -c $^ -o $@
+# 使用$(TARGET) 必须要加 '$' 符号
+$(TARGET1):$(OBJ1)
+	@$(CC) $^ $(LDFALGS) $(LIBS) -o $@ -lsqlite3
 
-doubleLinkList.o:doubleLinkList.c
-	gcc -c $^ -o $@
+$(TARGET2):$(OBJ2)
+	@$(CC) $^ $(LDFALGS) $(LIBS) -o $@ -lsqlite3
 
-doubleLinkListQueue.o:doubleLinkListQueue.c
-	gcc -c $^ -o $@
+%.o:%.c
+	@$(CC) -c $^ -o $@
 
-threadPool.o:threadPool.c
-	gcc -c $^ -o $@
+# 伪文件 / 伪目标
+.PHONY:	clean
 
-chatRoomServer.o:chatRoomServer.c
-	gcc -c $^ -o $@
-
-chatRoomClient.o:chatRoomClient.c
-	gcc -c $^ -o $@
-
+# 清除编译出来的依赖文件 和 二进制文件
 clean:
-	@rm -rf *.o $(TARFET) $(TARGET)
+	@$(RM) *.o $(TARGET1) $(TARGET2)
 
-all:server client
+all:$(TARGET1) $(TARGET2)
