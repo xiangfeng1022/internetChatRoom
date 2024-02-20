@@ -26,14 +26,20 @@
 /* 创建数据库句柄 */
 sqlite3 * chatRoomDB = NULL;
 
+/* 主界面选择 */
 enum CLIENT_CHOICE
 {
     REGISTER = 1,
     LOG_IN,
-    PRIVATE_CHAT,
-    GROUP_CHAT,
+    EXIT,
+};
+
+/* 功能界面选择 */
+enum FUNC_CHOICE
+{
+    PRIVATE_CHAT = 1,
     FRIEND_ADD,
-    GROUP_CREATE,
+    INTERNAL_EXIT,
 };
 
 typedef struct chatRoom
@@ -41,16 +47,15 @@ typedef struct chatRoom
     BalanceBinarySearchTree * online;
     int communicateFd;
     pthread_mutex_t mutex;
-    sqlite3 * ppDb;
 } chatRoom;
 
-#if 0
+
 typedef struct clientNode
 {
     char loginName[DEFAULT_LOGIN_NAME];
-    char loginPawd[DEFAULT_LOGIN_PAWD];
+    int communicateFd;
 } clientNode;
-#endif
+
 
 /* 锁 */
 pthread_mutex_t g_mutex;
@@ -110,10 +115,6 @@ void * chatHander(void * arg)
     int acceptfd = chat->communicateFd;
     /* 在线列表 */
     BalanceBinarySearchTree * onlineList = chat->online;
-    /* 数据库句柄 */
-    sqlite3 * charRoomDB = chat->ppDb;
-
-    int choice = 0;
 
     /* 新建用户结点 */
     char loginName[DEFAULT_LOGIN_NAME];
@@ -123,10 +124,30 @@ void * chatHander(void * arg)
 
     int flag = 0;
     /* 程序运行 */
+    int choice = 0;
     while (1)
     {
+        /* 定义指向数据库的指针 */
+        sqlite3 * chatRoomDB;
+        char * ermsg = NULL;
+        char sql[BUFFER_SQL];
+        bzero(sql, sizeof(sql));
+        int found= 0;
+        int ret = 0;
         /* 循环接收选择的功能 */
-        readData(acceptfd, &choice, sizeof(choice));
+        int readBytes = read(acceptfd, &choice, sizeof(choice));
+        if(readBytes < 0)
+        {
+            printf("read error\n");
+            close(acceptfd);
+            break;
+        }
+        else if(readBytes == 0)
+        {
+            printf("客户端下线\n");
+            close(acceptfd);
+            break;
+        }
         /* 当前客户端聊天文件名 */
         char clientHostBuffer[BUFFER_SIZE];
         bzero(clientHostBuffer, sizeof(clientHostBuffer));
@@ -146,8 +167,7 @@ void * chatHander(void * arg)
             pthread_mutex_lock(&g_mutex);
             
             /* 打开数据库 */
-            sqlite3 * chatRoomDB;
-            int ret = sqlite3_open("chatRoom.db", &chatRoomDB);
+            ret = sqlite3_open("chatRoom.db", &chatRoomDB);
             if(ret != SQLITE_OK)
             {
                 perror("sqlite open error");
@@ -155,10 +175,6 @@ void * chatHander(void * arg)
             }
 
             /* 检查用户是否已经存在 */
-            char * ermsg = NULL;
-            int found = 0;
-            char sql[BUFFER_SQL];
-            memset(sql, 0, sizeof(sql));
             sprintf(sql, "select * from user where id = '%s'", loginName);
             ret = sqlite3_exec(chatRoomDB, sql, callback, &found, &ermsg);
             if(ret != SQLITE_OK)
@@ -175,41 +191,114 @@ void * chatHander(void * arg)
             {
                 /* 将新用户添加到数据库 */
                 RegesiterContentInsert(chatRoomDB, loginName, loginPawd);
-
                 /* 注册成功 */
                 writeMessage(acceptfd, "注册成功", sizeof("注册成功"));
             }
 
-            // 解锁
+            /* 关闭数据库 */
+            sqlite3_close(chatRoomDB);
+
+            /* 解锁 */
             pthread_mutex_unlock(&g_mutex);
             break;
 
         /* 登录功能 */
         case LOG_IN:
-            /* code */
+            /* 读取用户输入的登录名和密码 */
+            readMessage(acceptfd, loginName, sizeof(loginName) - 1);
+            readMessage(acceptfd, loginPawd, sizeof(loginPawd) - 1);
 
-            /* 测试功能用例 */
-            #if 1
-            int choose = 0;
-            printf("选择账户：\n");
-            scanf("%d", &choose);
-            if(choose == 1)
-            {
-                balanceBinarySearchTreeInsert(onlineList, "aa");
-                strncat(clientHostBuffer, "aa", strlen("aa") + 1);
-                // strncpy(clientUsernameBuffer, "aa", strlen("aa") + 1);
-            }
-            else if(choose == 2)
-            {
-                balanceBinarySearchTreeInsert(onlineList, "bb");
-                strncat(clientHostBuffer, "bb", strlen("bb") + 1);
-                // strncpy(clientUsernameBuffer, "bb", strlen("bb") + 1);
-            }
-            #endif
+            /* 创建客户端结点 */
+            clientNode client;
+            bzero(&client, sizeof(client));
+            strncpy(client.loginName, loginName, sizeof(loginName));
+            client.communicateFd = acceptfd;
             
-            flag = 1;
+            /* 打开数据库连接 */
+            ret = sqlite3_open("chatRoom.db", &chatRoomDB);
+            if (ret != SQLITE_OK)
+            {
+                perror("sqlite open error");
+                close(acceptfd);
+                pthread_exit(NULL);
+            }
+    
+            /* 查询数据库，验证用户名和密码 */
+            sprintf(sql, "select * from user where id ='%s'", loginName);
+            ret = sqlite3_exec(chatRoomDB, sql, callback, &found, &ermsg);
+            if (ret != SQLITE_OK)
+            {
+                printf("Login failed: %s\n", ermsg);
+                close(acceptfd);
+                pthread_exit(NULL);
+            }
+            /* 用户存在 */
+            if(found == 1)
+            {
+                found = 0;
+                sprintf(sql, "select * from user where id ='%s' and password='%s'", loginName, loginPawd);
+                ret = sqlite3_exec(chatRoomDB, sql, callback, &found, &ermsg);
+                if (ret != SQLITE_OK)
+                {
+                    printf("Login failed: %s\n", ermsg);
+                    close(acceptfd);
+                    pthread_exit(NULL);
+                }
+                /* 密码正确 */
+                if(found == 1)
+                {
+                    /* 加锁，保证在线列表的互斥访问 */
+                    pthread_mutex_lock(&g_mutex);
+                    /* 在线列表中查询账号 */
+                    int existance = balanceBinarySearchTreeIsContainAppointVal(onlineList, (void *)&client);
+                    if(existance == 0)
+                    {
+                        /* 将用户添加到在线列表中 */
+                        balanceBinarySearchTreeInsert(onlineList, (void *)&client);
+                        /* 登录成功 */
+                        writeMessage(acceptfd, "登录成功", sizeof("登录成功"));
+                        /* 登录标志位置1 */
+                        flag = 1;
+                    }
+                    else if(existance == 1)
+                    {
+                        /* 用户已在别处登录 */
+                        writeMessage(acceptfd, "用户已在别处登录", sizeof("用户已在别处登录"));
+                    }
+                    /* 解锁 */
+                    pthread_mutex_unlock(&g_mutex);
+                }
+                /* 密码错误 */
+                else
+                {
+                    writeMessage(acceptfd, "密码错误", sizeof("密码错误"));
+                }
+            }
+            /* 用户不存在 */
+            else
+            {
+                writeMessage(acceptfd, "用户不存在", sizeof("用户不存在"));
+            }
+
+            /* 关闭数据库 */
+            sqlite3_close(chatRoomDB);
             break;
         
+        /* 退出功能 */
+        case EXIT:
+            /* 从在线列表中删除用户结点 */
+            balanceBinarySearchTreeDelete(onlineList, (void *)&client);
+            ret = balanceBinarySearchTreeIsContainAppointVal(onlineList, (void *)&client);
+            if(ret == 0)
+            {
+                /* 已删除结点 */
+                writeMessage(acceptfd, "客户端退出", sizeof("客户端退出"));
+            }
+            else
+            {
+                /* 未删除结点 */
+                writeMessage(acceptfd, "客户端退出失败", sizeof("客户端退出失败"));
+            }
 
         default:
             break;

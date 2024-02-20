@@ -19,14 +19,20 @@
 #define DEFAULT_LOGIN_PAWD  16
 #define BUFFER_SIZE 300
 
+/* 主界面选择 */
 enum CLIENT_CHOICE
 {
     REGISTER = 1,
     LOG_IN,
-    PRIVATE_CHAT,
-    GROUP_CHAT,
+    EXIT,
+};
+
+/* 功能界面选择 */
+enum FUNC_CHOICE
+{
+    PRIVATE_CHAT = 1,
     FRIEND_ADD,
-    GROUP_CREATE,
+    INTERNAL_EXIT,
 };
 
 /* 信息写入判断函数 */
@@ -37,6 +43,8 @@ static void readMessage(int fd, char *message, int messageSize);
 static void writeData(int fd, int *data, int dataSize);
 /* 用户注册函数 */
 static void registerUser(int socketfd);
+/* 用户登录函数 */
+static int loginUser(int socketfd);
 /* 聊天记录显示函数 */
 static void chatContentDisplay();
 
@@ -83,7 +91,7 @@ int main()
     bzero(mainMenuBuffer, sizeof(mainMenuBuffer));
     readMessage(mainMenu, mainMenuBuffer, sizeof(mainMenuBuffer) - 1);
 
-    /* 登录后打开功能页面 */
+    /* 打开功能页面文件 */
     int funcMenu = open("funcMenu", O_RDONLY);
     if (funcMenu == -1)
     {
@@ -96,20 +104,26 @@ int main()
     bzero(funcMenuBuffer, sizeof(funcMenuBuffer));
     readMessage(funcMenu, funcMenuBuffer, sizeof(funcMenuBuffer) - 1);
 
-    int choice = 0;
-    char c = '0';
     /* 登录标志位 */
     int flag = 0;
     /* 开始执行功能 */
+    int choice = 0;
     while(1)
     {
+        choice = 0;
+        char input[BUFFER_SIZE];
+        bzero(input, sizeof(input));
         printf("%s\n", mainMenuBuffer);
         printf("请选择你需要的功能：\n");
         scanf("%d", &choice);
+        fgets(input, sizeof(input), stdin);
+        sscanf(input, "%d", &choice);
+        if(choice >= 1 && choice <= 3)
+        {
+            writeData(socketfd, &choice, sizeof(choice));
+        }
         /* 清空输入缓冲区 */
-        writeData(socketfd, &choice, sizeof(choice));
         system("clear");
-        // while ((c = getchar()) != EOF && c != '\n');
 
         switch (choice)
         {
@@ -123,7 +137,32 @@ int main()
         
         /* 登录 */
         case LOG_IN:
-            flag = 1;
+            /* 用户登录函数 */
+            flag = loginUser(socketfd);
+            sleep(2);
+            system("clear");
+            break;
+        
+        /* 退出 */
+        case EXIT:
+            char response[BUFFER_SIZE];
+            bzero(response, sizeof(response));
+            /* 接收服务器的响应 */
+            readMessage(socketfd, response, sizeof(response) - 1);
+
+            /* 解析服务器的响应并进行处理 */
+            if(strncmp(response, "客户端退出", sizeof("客户端退出")) == 0)
+            {
+                printf("客户端退出\n");
+                sleep(1);
+                close(mainMenu);
+                close(funcMenu);
+                exit(-1);
+            }
+            else if(strncmp(response, "客户端退出失败", sizeof("客户端退出失败")) == 0)
+            {
+                printf("客户端退出失败\n");
+            }
             break;
 
         default:
@@ -136,9 +175,7 @@ int main()
         /* 服务器缓冲区 */
         char serRecvBuffer[BUFFER_SIZE];
         bzero(serRecvBuffer, sizeof(serRecvBuffer));
-        /* 群名 */
-        char groupName[BUFFER_SIZE];
-        bzero(groupName, sizeof(groupName));
+
         /* 用户名 */
         char userName[BUFFER_SIZE];
         bzero(userName, sizeof(userName));
@@ -151,9 +188,12 @@ int main()
             printf("%s\n", funcMenuBuffer);
             printf("请选择你需要的功能：\n");
             scanf("%d", &mode);
-            writeData(socketfd, &mode, sizeof(mode));
+            if(mode >= 1 && mode <= 3)
+            {
+                writeData(socketfd, &mode, sizeof(mode));
+            }
 
-            switch (choice)
+            switch (mode)
             {
             /* 私聊 */
             case PRIVATE_CHAT:
@@ -186,36 +226,9 @@ int main()
                 }
                 break;
 
-            /* 群聊 */
-            case GROUP_CHAT:
-                printf("输入群名称：\n");
-                scanf("%s", groupName);
-                write(socketfd, groupName, sizeof(groupName));
-                break;
-            
             /* 加好友 */
             case FRIEND_ADD:
                 
-                break;
-
-            /* 建群 */
-            case GROUP_CREATE:
-                printf("输入群名称：\n");
-                scanf("%s", groupName);
-                write(socketfd, groupName, sizeof(groupName));
-                while(1)
-                {
-                    printf("输入添加到群里的用户(输入退出结束添加用户)：\n");
-                    scanf("%s", userName);
-                    if(userName != "退出")
-                    {
-                        write(socketfd, userName, sizeof(userName));
-                    }
-                    else
-                    {
-                        break;
-                    }
-                }  
                 break;
 
             default:
@@ -281,6 +294,56 @@ static void registerUser(int socketfd)
     if(ret != SQLITE_OK)
     {
         printf("sqlite exec error: %s\n", errormsg);
+        exit(-1);
+    }
+}
+
+/* 用户登录函数 */
+static int loginUser(int socketfd)
+{
+    char username[DEFAULT_LOGIN_NAME];
+    bzero(username, sizeof(username));
+    char password[DEFAULT_LOGIN_PAWD];
+    bzero(password, sizeof(password));
+    char response[BUFFER_SIZE];
+    bzero(response, sizeof(response));
+
+    printf("请输入用户名：");
+    scanf("%s", username);
+    printf("请输入密码：");
+    scanf("%s", password);
+
+    /* 发送登录信息给服务器 */
+    writeMessage(socketfd, username, sizeof(username) - 1);
+    writeMessage(socketfd, password, sizeof(password) - 1);
+
+    /* 接收服务器的响应 */
+    readMessage(socketfd, response, sizeof(response) - 1);
+
+    /* 解析服务器的响应并进行处理 */
+    if(strncmp(response, "登录成功", sizeof("登录成功")) == 0)
+    {
+        printf("登录成功\n");
+        return 1;
+    }
+    else if(strncmp(response, "用户已在别处登录", sizeof("用户已在别处登录")) == 0)
+    {
+        printf("用户已在别处登录\n");
+        return 0;
+    }
+    else if(strncmp(response, "密码错误", sizeof("密码错误")) == 0)
+    {
+        printf("密码错误\n");
+        return 0;
+    }
+    else if(strncmp(response, "用户不存在", sizeof("用户不存在")) == 0)
+    {
+        printf("用户不存在\n");
+        return 0;
+    }
+    else
+    {
+        printf("系统出错\n");
         exit(-1);
     }
 }
