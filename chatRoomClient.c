@@ -159,7 +159,7 @@ int main()
                 close(funcMenu);
                 exit(-1);
             }
-            else if(strncmp(response, "客户端退出失败", sizeof("客户端退出失败")) == 0)
+            else
             {
                 printf("客户端退出失败\n");
             }
@@ -176,24 +176,27 @@ int main()
         char serRecvBuffer[BUFFER_SIZE];
         bzero(serRecvBuffer, sizeof(serRecvBuffer));
 
-        /* 用户名 */
-        char userName[BUFFER_SIZE];
-        bzero(userName, sizeof(userName));
         int connect = 0;
         int readBytes = 0;
         /* 模式选择变量 */
         int mode = 0;
         while(flag)
         {
+            mode = 0;
+            char input2[BUFFER_SIZE];
+            bzero(input2, sizeof(input2));
             printf("%s\n", funcMenuBuffer);
             printf("请选择你需要的功能：\n");
-            scanf("%d", &mode);
+            fgets(input2, sizeof(input2), stdin);
+            sscanf(input2, "%d", &mode);
             if(mode >= 1 && mode <= 3)
             {
                 writeData(socketfd, &mode, sizeof(mode));
             }
+            /* 清空输入缓冲区 */
+            system("clear");
 
-            switch (mode)
+            switch(mode)
             {
             /* 私聊 */
             case PRIVATE_CHAT:
@@ -229,6 +232,29 @@ int main()
             /* 加好友 */
             case FRIEND_ADD:
                 
+                break;
+
+            /* 退出 */
+            case INTERNAL_EXIT:
+                char response[BUFFER_SIZE];
+                bzero(response, sizeof(response));
+                /* 接收服务器的响应 */
+                readMessage(socketfd, response, sizeof(response) - 1);
+
+                /* 解析服务器的响应并进行处理 */
+                if(strncmp(response, "账户退出", sizeof("账户退出")) == 0)
+                {
+                    printf("账户退出\n");
+                    sleep(1);
+                    system("clear");
+                    flag = 0;
+                }
+                else if(strncmp(response, "账户退出失败", sizeof("账户退出失败")) == 0)
+                {
+                    printf("账户退出失败\n");
+                    sleep(1);
+                    system("clear");
+                }
                 break;
 
             default:

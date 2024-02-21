@@ -63,22 +63,29 @@ pthread_mutex_t g_mutex;
 /* AVL比较器：以登录名做比较 */
 int compareFunc(void * val1, void * val2)
 {
-    char *buf1 = (char *)val1;
-    char *buf2 = (char *)val2;
-    if(strlen(buf1) != strlen(buf2))
+    clientNode *node1 = (clientNode *)val1;
+    clientNode *node2 = (clientNode *)val2;
+
+    int ret = strncmp(node1->loginName, node2->loginName, sizeof(node1->loginName));
+    if(ret > 0)
+    {
+        return 1;
+    }
+    else if(ret < 0)
     {
         return -1;
     }
     else
     {
-        return strncmp(buf1, buf2, strlen(buf1));
+        return 0;
     }
 }
 
 /* AVL打印器 */
 int printfFunc(void * val)
 {
-
+    clientNode * client = (clientNode *)val;
+    printf("%s\n", client->loginName);
 }
 
 
@@ -121,10 +128,14 @@ void * chatHander(void * arg)
     bzero(loginName, sizeof(loginName));
     char loginPawd[DEFAULT_LOGIN_PAWD];
     bzero(loginPawd, sizeof(loginPawd));
+    /* 创建客户端结点 */
+    clientNode client;
+    bzero(&client, sizeof(client));
+    bzero(client.loginName, sizeof(client.loginName));
 
     int flag = 0;
-    /* 程序运行 */
     int choice = 0;
+    /* 程序运行 */
     while (1)
     {
         /* 定义指向数据库的指针 */
@@ -208,9 +219,7 @@ void * chatHander(void * arg)
             readMessage(acceptfd, loginName, sizeof(loginName) - 1);
             readMessage(acceptfd, loginPawd, sizeof(loginPawd) - 1);
 
-            /* 创建客户端结点 */
-            clientNode client;
-            bzero(&client, sizeof(client));
+            /* 写入客户端结点 */
             strncpy(client.loginName, loginName, sizeof(loginName));
             client.communicateFd = acceptfd;
             
@@ -255,6 +264,7 @@ void * chatHander(void * arg)
                     {
                         /* 将用户添加到在线列表中 */
                         balanceBinarySearchTreeInsert(onlineList, (void *)&client);
+                        balanceBinarySearchTreeLevelOrderTravel(onlineList);
                         /* 登录成功 */
                         writeMessage(acceptfd, "登录成功", sizeof("登录成功"));
                         /* 登录标志位置1 */
@@ -286,19 +296,8 @@ void * chatHander(void * arg)
         
         /* 退出功能 */
         case EXIT:
-            /* 从在线列表中删除用户结点 */
-            balanceBinarySearchTreeDelete(onlineList, (void *)&client);
-            ret = balanceBinarySearchTreeIsContainAppointVal(onlineList, (void *)&client);
-            if(ret == 0)
-            {
-                /* 已删除结点 */
                 writeMessage(acceptfd, "客户端退出", sizeof("客户端退出"));
-            }
-            else
-            {
-                /* 未删除结点 */
-                writeMessage(acceptfd, "客户端退出失败", sizeof("客户端退出失败"));
-            }
+            break;
 
         default:
             break;
@@ -308,8 +307,65 @@ void * chatHander(void * arg)
         char recvBuffer[BUFFER_SIZE];
         bzero(recvBuffer, sizeof(recvBuffer));
         
+        int mode = 0;
         while(flag)
         {
+            /* 循环接收选择的功能 */
+            int readBytes = read(acceptfd, &mode, sizeof(mode));
+            if(readBytes < 0)
+            {
+                printf("read error\n");
+                close(acceptfd);
+                break;
+            }
+            else if(readBytes == 0)
+            {
+                printf("客户端下线\n");
+                close(acceptfd);
+                break;
+            }
+
+            switch(mode)
+            {
+            /* 私聊功能 */
+            case PRIVATE_CHAT:
+                
+                break;
+
+            /* 加好友功能 */
+            case FRIEND_ADD:
+                
+                break;
+            
+            /* 退出功能 */
+            case INTERNAL_EXIT:
+                /* 加锁，保证在线列表的互斥访问 */
+                pthread_mutex_lock(&g_mutex);
+                /* 从在线列表中删除用户结点 */
+                balanceBinarySearchTreeDelete(onlineList, (void *)&client);
+                if(balanceBinarySearchTreeIsContainAppointVal(onlineList, (void *)&client))
+                {
+                    /* 未删除结点 */
+                    writeMessage(acceptfd, "账户退出失败", sizeof("账户退出失败"));
+                    printf("账户退出失败");
+                }
+                else
+                {
+                    /* 已删除结点 */
+                    writeMessage(acceptfd, "账户退出", sizeof("账户退出"));
+                    printf("账户退出");
+                    flag = 0;
+                }
+                /* 解锁 */
+                pthread_mutex_unlock(&g_mutex);
+                flag = 0;
+                break;
+
+            default:
+                break;
+            }
+        }
+#if 0
             sqlite3 *chat1db = NULL;
             sqlite3 *chat2db = NULL;
             int readBytes = read(acceptfd, recvBuffer, sizeof(recvBuffer) - 1);
@@ -332,6 +388,7 @@ void * chatHander(void * arg)
                 write(acceptfd, "对方不在线", strlen("对方不在线"));
                 break;
             }
+
             while(1)
             {
                 /* 从客户端读取输入的文字 */
@@ -355,11 +412,8 @@ void * chatHander(void * arg)
             /* 关闭数据库链接 */
             sqlite3_close(chat1db);
             sqlite3_close(chat2db);
-            break;
-        }
-
+#endif
     }
-
     pthread_exit(NULL);
 }
 
